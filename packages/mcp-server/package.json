@@ -1,0 +1,32 @@
+{
+  "name": "@taskduo/mcp-server",
+  "version": "1.0.0",
+  "description": "Official Model Context Protocol (MCP) server for TaskDuo",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "type": "module",
+  "bin": {
+    "taskduo-mcp": "./bin/taskduo-mcp.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "start": "node ./bin/taskduo-mcp.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.6.0",
+    "@taskduo/sdk": "^1.0.0",
+    "zod": "^3.24.2"
+  },
+  "author": "TaskDuo Authors",
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  }
+}

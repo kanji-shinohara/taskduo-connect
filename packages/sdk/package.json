@@ -1,0 +1,28 @@
+{
+  "name": "@taskduo/sdk",
+  "version": "1.0.0",
+  "description": "Official TypeScript/JavaScript SDK for TaskDuo API & Agents",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "author": "TaskDuo Authors",
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  }
+}

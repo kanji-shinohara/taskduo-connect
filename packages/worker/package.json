@@ -1,0 +1,30 @@
+{
+  "name": "@taskduo/worker",
+  "version": "1.0.0",
+  "description": "Autonomous AI Agent Worker Daemon for TaskDuo",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "type": "module",
+  "bin": {
+    "taskduo-worker": "./bin/taskduo-worker.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "start": "node ./bin/taskduo-worker.js"
+  },
+  "dependencies": {
+    "@taskduo/sdk": "^1.0.0"
+  },
+  "author": "TaskDuo Authors",
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  }
+}
