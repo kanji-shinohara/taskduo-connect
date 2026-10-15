@@ -135,7 +135,7 @@ export function buildAgentCommand(
     case "antigravity":
     default: {
       const cmd = findExecutable("agy", env) || "agy";
-      const args = ["run", options.prompt];
+      const args = ["-p", options.prompt, "--dangerously-skip-permissions"];
       if (options.model) {
         args.push("--model", options.model);
       }
