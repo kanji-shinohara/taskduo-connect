@@ -27,7 +27,7 @@ export class TaskDuoClient {
       (typeof process !== "undefined" && process.env?.TODO_API_URL) ||
       "http://localhost:43000";
 
-    this.baseUrl = rawUrl.replace(/\/+$/, "");
+    this.baseUrl = rawUrl.replace(/\/mcp\/?$/, "").replace(/\/+$/, "");
     this.apiKey =
       config.apiKey ||
       (typeof process !== "undefined" && process.env?.TASKDUO_API_KEY) ||

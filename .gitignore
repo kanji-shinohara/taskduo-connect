@@ -9,6 +9,7 @@ pnpm-debug.log*
 # Node dependencies
 node_modules/
 dist/
+*.tsbuildinfo
 
 # Editor directories and files
 .vscode/*
