@@ -236,7 +236,10 @@ def run_cli_command(cmd, target):
         if target == "kiro":
             lower_clean = cleaned_text.lower()
             if (
-                "signed in" in lower_clean
+                "let's get you signed in" in lower_clean
+                or "welcome to kiro cli" in lower_clean
+                or "not signed in" in lower_clean
+                or "you are not logged in" in lower_clean
                 or "continue to the browser" in lower_clean
                 or "opening browser" in lower_clean
                 or "choose a way to sign in" in lower_clean
@@ -493,7 +496,10 @@ def parse_kiro(text: str):
         return res
     lower = text.lower()
     if (
-        "signed in" in lower
+        "let's get you signed in" in lower
+        or "welcome to kiro cli" in lower
+        or "not signed in" in lower
+        or "you are not logged in" in lower
         or "continue to the browser" in lower
         or "opening browser" in lower
         or "choose a way to sign in" in lower
