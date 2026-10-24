@@ -1,7 +1,12 @@
 {
   "name": "@taskduo/mcp-server",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Official Model Context Protocol (MCP) server for TaskDuo",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kanji-shinohara/taskduo-connect.git",
+    "directory": "packages/mcp-server"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "type": "module",
@@ -21,7 +26,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.6.0",
-    "@taskduo/sdk": "^1.0.0",
+    "@taskduo/sdk": "^1.0.1",
     "zod": "^3.24.2"
   },
   "author": "TaskDuo Authors",

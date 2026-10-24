@@ -70,19 +70,8 @@ def run_cli_command(cmd, target):
     env["COLORTERM"] = "truecolor"
     env["BROWSER"] = "/usr/bin/true"
     if target == "claude":
-        # Safe debug logger
-        def log_dbg(msg):
-            try:
-                with open("/tmp/keychain_debug.log", "a", encoding="utf-8") as f_dbg:
-                    f_dbg.write(f"{msg}\n")
-            except Exception:
-                pass
-
-        # Clear old debug log
-        try:
-            if os.path.exists("/tmp/keychain_debug.log"):
-                os.remove("/tmp/keychain_debug.log")
-        except Exception:
+        # No-op debug logger (never write sensitive state or tokens to /tmp)
+        def log_dbg(_msg):
             pass
 
         password = os.environ.get("REMOTE_PASSWORD")
@@ -124,6 +113,7 @@ def run_cli_command(cmd, target):
                     capture_output=True,
                     text=True,
                     check=True,
+                    timeout=10,
                 )
                 log_dbg("Keychain unlocked successfully.")
             except Exception as ke:
@@ -135,6 +125,7 @@ def run_cli_command(cmd, target):
                 ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
                 capture_output=True,
                 text=True,
+                timeout=10,
             )
             if cred_res.returncode == 0 and cred_res.stdout.strip():
                 cred_json_str = cred_res.stdout.strip()
@@ -168,22 +159,6 @@ def run_cli_command(cmd, target):
         # Clear API keys to prevent API billing mode if OAuth is expected from ~/.claude/
         env.pop("CLAUDE_API_KEY", None)
         env.pop("ANTHROPIC_API_KEY", None)
-
-    try:
-        with open(f"/tmp/env_debug_{target}.txt", "w") as f_dbg:
-            for k_dbg, v_dbg in env.items():
-                if any(
-                    x_dbg in k_dbg.upper()
-                    for x_dbg in ["CLAUDE", "ANTHROPIC", "KEY", "TOKEN"]
-                ):
-                    val_str_dbg = (
-                        f"{str(v_dbg)[:10]}... (len: {len(str(v_dbg))})"
-                        if v_dbg is not None
-                        else "None"
-                    )
-                    f_dbg.write(f"{k_dbg}: {val_str_dbg}\n")
-    except Exception:
-        pass
 
     proc = subprocess.Popen(
         cmd,
@@ -402,6 +377,11 @@ def run_cli_command(cmd, target):
         read_output()
     except Exception:
         pass
+    finally:
+        try:
+            os.close(master)
+        except Exception:
+            pass
 
     if proc.poll() is None:
         proc.terminate()
@@ -409,14 +389,10 @@ def run_cli_command(cmd, target):
             proc.wait(timeout=3)
         except subprocess.TimeoutExpired:
             proc.kill()
-            proc.wait()
-
-    # Write raw output for backend execution debugging
-    try:
-        with open(f"/tmp/{target}_pty_debug.txt", "w", encoding="utf-8") as f:
-            f.write(clean_ansi(output.decode("utf-8", errors="ignore")))
-    except Exception:
-        pass
+            try:
+                proc.wait(timeout=3)
+            except Exception:
+                pass
 
     return clean_ansi(output.decode("utf-8", errors="ignore"))
 

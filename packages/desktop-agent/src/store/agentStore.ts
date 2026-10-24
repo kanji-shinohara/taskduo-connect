@@ -16,7 +16,7 @@ export const useAgentStore = create<AgentState>()(
       isActive: false,
       serverUrl: "",
       apiKey: "",
-      workerName: "Local-Agent-" + Math.floor(Math.random() * 10000),
+      workerName: "",
 
       setActive: (active) => set({ isActive: active }),
       setConfig: (url, key, name) =>

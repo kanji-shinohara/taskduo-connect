@@ -167,22 +167,56 @@ export class WorkerRunner {
       await this.client.startTask(task.id, `Worker '${this.workerName}' started processing.`);
 
       const agentType = (task.aiAgent?.toLowerCase() || "antigravity") as SupportedAgent;
-      const prompt = task.content || task.title;
+      let prompt = task.content || task.description || task.title;
+      const rawDods = typeof task.dods === "string" ? JSON.parse(task.dods) : task.dods;
+      if (Array.isArray(rawDods) && rawDods.length > 0) {
+        const dodList = rawDods
+          .map((d: any, i: number) => `${i + 1}. [${d?.completed ? "x" : " "}] ${d?.text || d}`)
+          .join("\n");
+        prompt += `\n\n## Definition of Done (DoD)\n${dodList}\n\nPlease complete all DoD items and call task_complete(id: "${task.id}") when finished.`;
+      }
 
-      const cmdConfig = buildAgentCommand(agentType, {
-        prompt,
-        model: task.aiModel,
-      });
+      const rawProject = task.project as any;
+      const projectLocalPath =
+        typeof rawProject === "object" && rawProject?.localPath
+          ? String(rawProject.localPath).replace(/^~/, os.homedir())
+          : undefined;
+      const targetCwd =
+        projectLocalPath && fs.existsSync(projectLocalPath)
+          ? projectLocalPath
+          : os.homedir();
 
-      console.log(`🤖 Invoking agent: ${agentType} (${cmdConfig.cmd})`);
+      const cmdConfig = buildAgentCommand(
+        agentType,
+        {
+          prompt,
+          model: task.aiModel,
+          cwd: targetCwd,
+        },
+        {
+          TASKDUO_TASK_ID: task.id,
+        },
+      );
+
+      console.log(`🤖 Invoking agent: ${agentType} (${cmdConfig.cmd}) in ${targetCwd}`);
 
       const proc = spawn(cmdConfig.cmd, cmdConfig.args, {
+        cwd: targetCwd,
         shell: cmdConfig.useShell,
         env: cmdConfig.env,
       });
 
       const formatter = new AgentStreamFormatter(agentType);
       let outputLogs = "";
+
+      const timeoutMs = 30 * 60 * 1000;
+      const timeoutTimer = setTimeout(() => {
+        console.warn(`⏱️ [Worker] Task ${task.id} timed out after 30m. Terminating child process...`);
+        outputLogs += `\n[System] Worker execution timed out after 30 minutes.\n`;
+        try {
+          proc.kill("SIGKILL");
+        } catch {}
+      }, timeoutMs);
 
       proc.stdout?.on("data", (chunk: Buffer) => {
         const text = chunk.toString();
@@ -200,8 +234,12 @@ export class WorkerRunner {
       });
 
       const exitCode = await new Promise<number>((resolve) => {
-        proc.on("close", (code) => resolve(code ?? 0));
+        proc.on("close", (code) => {
+          clearTimeout(timeoutTimer);
+          resolve(code ?? 0);
+        });
         proc.on("error", (err) => {
+          clearTimeout(timeoutTimer);
           console.error(`❌ Process error:`, err);
           resolve(1);
         });

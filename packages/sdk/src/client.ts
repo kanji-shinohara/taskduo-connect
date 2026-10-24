@@ -104,11 +104,13 @@ export class TaskDuoClient {
   // ── Tasks ───────────────────────────────────────────────────────────────
   async listTasks(params: {
     status?: string;
+    project?: string;
     projectId?: string;
     limit?: number;
   } = {}): Promise<Task[]> {
     const query = new URLSearchParams();
     if (params.status) query.set("status", params.status);
+    if (params.project) query.set("project", params.project);
     if (params.projectId) query.set("projectId", params.projectId);
     if (params.limit) query.set("limit", String(params.limit));
 
@@ -124,16 +126,32 @@ export class TaskDuoClient {
   }
 
   async createTask(input: CreateTaskInput): Promise<Task> {
+    const normalizedPriority =
+      input.priority === "urgent" ? "high" : input.priority;
+    const payload = {
+      ...input,
+      project: input.project || input.projectId,
+      priority: normalizedPriority,
+    };
     return this.request<Task>("/api/tasks", {
       method: "POST",
-      body: JSON.stringify(input),
+      body: JSON.stringify(payload),
     });
   }
 
   async updateTask(id: string, input: UpdateTaskInput): Promise<Task> {
+    const normalizedPriority =
+      input.priority === "urgent" ? "high" : input.priority;
+    const payload = {
+      ...input,
+      ...(input.project || input.projectId
+        ? { project: input.project || input.projectId }
+        : {}),
+      ...(normalizedPriority ? { priority: normalizedPriority } : {}),
+    };
     return this.request<Task>(`/api/tasks/${id}`, {
       method: "PUT",
-      body: JSON.stringify(input),
+      body: JSON.stringify(payload),
     });
   }
 
@@ -153,13 +171,15 @@ export class TaskDuoClient {
   async completeTask(
     id: string,
     resultSummary: string,
-    dods?: { text: string; completed: boolean }[]
+    dods?: { text: string; completed: boolean }[],
+    options?: { requiresHumanReview?: boolean }
   ): Promise<Task> {
     const task = await this.getTask(id);
     const updatedDods = dods || (task.dods || []).map((d) => ({ ...d, completed: true }));
+    const targetStatus = options?.requiresHumanReview ? "ai_confirming" : "ai_done";
 
     return this.updateTask(id, {
-      status: "ai_done",
+      status: targetStatus,
       result: resultSummary,
       dods: updatedDods,
     });

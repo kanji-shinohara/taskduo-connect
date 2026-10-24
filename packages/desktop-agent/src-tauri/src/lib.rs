@@ -4,9 +4,24 @@ use tauri::{
     Manager,
 };
 use tiny_http::{Response, Server};
-use std::time::Duration;
+use std::io::Read;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri_plugin_shell::ShellExt;
 use url::Url;
+
+fn generate_csrf_state() -> String {
+    let mut buf = [0u8; 16];
+    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+        if f.read_exact(&mut buf).is_ok() {
+            return buf.iter().map(|b| format!("{:02x}", b)).collect();
+        }
+    }
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("state_{:032x}_{}", nanos, std::process::id())
+}
 
 #[tauri::command]
 async fn login_via_browser(app: tauri::AppHandle, api_url: String) -> Result<String, String> {
@@ -23,7 +38,7 @@ async fn login_via_browser(app: tauri::AppHandle, api_url: String) -> Result<Str
         }
     };
 
-    let state = "agent_login_state";
+    let state = generate_csrf_state();
     let login_url = format!("{}/cli-login?port={}&state={}", api_url.trim_end_matches('/'), port, state);
 
     if let Err(e) = app.shell().open(&login_url, None) {
@@ -43,11 +58,19 @@ async fn login_via_browser(app: tauri::AppHandle, api_url: String) -> Result<Str
             if let Ok(parsed_url) = Url::parse(&url_str) {
                 if parsed_url.path() == "/callback" {
                     let mut api_key = None;
+                    let mut received_state = None;
                     for (k, v) in parsed_url.query_pairs() {
                         if k == "apiKey" {
                             api_key = Some(v.into_owned());
-                            break;
+                        } else if k == "state" {
+                            received_state = Some(v.into_owned());
                         }
+                    }
+
+                    if received_state.as_deref() != Some(state.as_str()) {
+                        let response = Response::from_string("Error: Invalid or missing CSRF state").with_status_code(403);
+                        let _ = request.respond(response);
+                        continue;
                     }
 
                     if let Some(key) = api_key {
@@ -88,10 +111,25 @@ async fn login_via_browser(app: tauri::AppHandle, api_url: String) -> Result<Str
     }
 }
 
+#[tauri::command]
+fn get_hostname() -> String {
+    if let Ok(output) = std::process::Command::new("hostname").output() {
+        if output.status.success() {
+            let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !name.is_empty() {
+                return name;
+            }
+        }
+    }
+    std::env::var("HOSTNAME")
+        .or_else(|_| std::env::var("COMPUTERNAME"))
+        .unwrap_or_else(|_| "local-agent".to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![login_via_browser])
+        .invoke_handler(tauri::generate_handler![login_via_browser, get_hostname])
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_log::Builder::new().build())
         .on_window_event(|window, event| match event {

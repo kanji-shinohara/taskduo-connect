@@ -1,7 +1,12 @@
 {
   "name": "@taskduo/sdk",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Official TypeScript/JavaScript SDK for TaskDuo API & Agents",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kanji-shinohara/taskduo-connect.git",
+    "directory": "packages/sdk"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "type": "module",

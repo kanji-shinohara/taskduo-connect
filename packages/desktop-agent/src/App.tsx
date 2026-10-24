@@ -13,10 +13,21 @@ import {
   AlertCircle,
   Save,
 } from "lucide-react";
-import { invoke } from "@tauri-apps/api/core";
-import { SystemResourceWidget } from "./components/SystemResourceWidget";
-import { QuotaIndicator } from "./components/QuotaIndicator";
 
+async function invokeTauri<T = unknown>(
+  cmd: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
+  const w = window as unknown as {
+    __TAURI_INTERNALS__?: {
+      invoke: (cmd: string, args?: Record<string, unknown>) => Promise<T>;
+    };
+  };
+  if (w.__TAURI_INTERNALS__?.invoke) {
+    return w.__TAURI_INTERNALS__.invoke(cmd, args);
+  }
+  throw new Error("Tauri IPC not available");
+}
 
 function App() {
   const { isActive, serverUrl, apiKey, workerName, setActive, setConfig } =
@@ -33,16 +44,21 @@ function App() {
   useAgentDaemon();
 
   useEffect(() => {
-    if (workerName && workerName.startsWith("Local-Agent-")) {
-      invoke("get_hostname")
-        .then((hostname) => {
-          if (hostname && hostname !== "Local-Agent") {
-            const newName = hostname as string;
-            setConfig(serverUrl, apiKey, newName);
-            setLocalName(newName);
-          }
+    if (!workerName || workerName.startsWith("Local-Agent-")) {
+      invokeTauri<string>("get_hostname")
+        .then((hostname: string) => {
+          const newName =
+            hostname && hostname !== "Local-Agent"
+              ? hostname
+              : "local-agent";
+          setConfig(serverUrl, apiKey, newName);
+          setLocalName(newName);
         })
-        .catch(console.error);
+        .catch(() => {
+          const fallbackName = "local-agent";
+          setConfig(serverUrl, apiKey, fallbackName);
+          setLocalName(fallbackName);
+        });
     }
   }, []);
 
@@ -68,7 +84,7 @@ function App() {
     }
     setIsLoggingIn(true);
     try {
-      const newApiKey: string = await invoke("login_via_browser", {
+      const newApiKey: string = await invokeTauri<string>("login_via_browser", {
         apiUrl: localUrl,
       });
       setLocalKey(newApiKey);
@@ -252,9 +268,6 @@ function App() {
           )}
         </button>
       </div>
-
-      <SystemResourceWidget />
-      <QuotaIndicator />
     </div>
   );
 }

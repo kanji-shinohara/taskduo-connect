@@ -22,7 +22,7 @@
     ],
     "macOSPrivateApi": true,
     "security": {
-      "csp": null
+      "csp": "default-src 'self' tauri: customprotocol:; connect-src 'self' http://localhost:* http://127.0.0.1:* https://*.ts.net:*; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self' 'unsafe-inline'"
     }
   },
   "bundle": {

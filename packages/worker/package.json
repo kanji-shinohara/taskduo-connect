@@ -1,7 +1,12 @@
 {
   "name": "@taskduo/worker",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Autonomous AI Agent Worker Daemon for TaskDuo",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kanji-shinohara/taskduo-connect.git",
+    "directory": "packages/worker"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "type": "module",
@@ -11,6 +16,7 @@
   "files": [
     "bin",
     "dist",
+    "scripts",
     "README.md"
   ],
   "scripts": {
@@ -20,7 +26,7 @@
     "start": "node ./bin/taskduo-worker.js"
   },
   "dependencies": {
-    "@taskduo/sdk": "^1.0.0"
+    "@taskduo/sdk": "^1.0.1"
   },
   "author": "TaskDuo Authors",
   "license": "Apache-2.0",
