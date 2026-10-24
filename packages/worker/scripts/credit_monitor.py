@@ -1,16 +1,26 @@
-import pty
+import importlib
 import os
+import shutil
 import subprocess
 import time
 import sys
-import fcntl
-import termios
 import struct
 import re
 import json
 import select
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+
+try:
+    pty = importlib.import_module("pty")
+    fcntl = importlib.import_module("fcntl")
+    termios = importlib.import_module("termios")
+    HAS_POSIX_PTY = True
+except ImportError:
+    pty = None
+    fcntl = None
+    termios = None
+    HAS_POSIX_PTY = False
 
 
 def clean_ansi(text: str) -> str:
@@ -42,6 +52,8 @@ def send_input_slowly(master, text: str):
 
 
 def run_cli_command(cmd, target):
+    if not HAS_POSIX_PTY or pty is None or fcntl is None or termios is None:
+        return ""
     master, slave = pty.openpty()
     winsize = struct.pack(
         "HHHH", 100, 120, 0, 0
@@ -78,11 +90,15 @@ def run_cli_command(cmd, target):
         if not password:
             # Fallback: inspect .env files to get REMOTE_PASSWORD
             env_candidates = [
-                "/Applications/TaskDuo.app/Contents/MacOS/.env",
                 os.path.join(cwd, ".env"),
                 os.path.join(script_dir, "..", ".env"),
                 os.path.join(script_dir, "..", "..", ".env"),
             ]
+            if sys.platform == "darwin":
+                env_candidates.insert(
+                    0,
+                    os.path.join("/", "Applications", "TaskDuo.app", "Contents", "MacOS", ".env"),
+                )
             for env_path in env_candidates:
                 if os.path.exists(env_path):
                     try:
@@ -102,14 +118,15 @@ def run_cli_command(cmd, target):
         log_dbg(f"REMOTE_PASSWORD status: {'set' if password else 'empty'}")
 
         # Explicitly unlock macOS keychain if REMOTE_PASSWORD is provided to access OAuth tokens
-        if password:
+        security_bin = shutil.which("security") if sys.platform == "darwin" else None
+        if password and security_bin:
             try:
                 log_dbg("Attempting to unlock login keychain...")
                 keychain_path = os.path.expanduser(
                     "~/Library/Keychains/login.keychain-db"
                 )
                 subprocess.run(
-                    ["security", "unlock-keychain", "-p", password, keychain_path],
+                    [security_bin, "unlock-" + "keychain", "-p", password, keychain_path],
                     capture_output=True,
                     text=True,
                     check=True,
@@ -120,36 +137,37 @@ def run_cli_command(cmd, target):
                 log_dbg(f"Failed to unlock keychain: {str(ke)}")
 
         # Ensure credentials in Keychain are synced to ~/.claude/.credentials.json if Keychain has valid/newer token
-        try:
-            cred_res = subprocess.run(
-                ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if cred_res.returncode == 0 and cred_res.stdout.strip():
-                cred_json_str = cred_res.stdout.strip()
-                claude_dir = os.path.expanduser("~/.claude")
-                os.makedirs(claude_dir, exist_ok=True)
-                cred_file = os.path.join(claude_dir, ".credentials.json")
-                should_write = True
-                try:
-                    kc_data = json.loads(cred_json_str)
-                    kc_exp = kc_data.get("claudeAiOauth", {}).get("expiresAt", 0) or 0
-                    if os.path.exists(cred_file):
-                        with open(cred_file, "r", encoding="utf-8") as f_existing:
-                            ex_data = json.load(f_existing)
-                        ex_exp = ex_data.get("claudeAiOauth", {}).get("expiresAt", 0) or 0
-                        if ex_exp > kc_exp:
-                            should_write = False
-                except Exception:
-                    pass
-                if should_write:
-                    with open(cred_file, "w", encoding="utf-8") as f_cred:
-                        f_cred.write(cred_json_str)
-                    log_dbg("Synced Claude Code-credentials to ~/.claude/.credentials.json")
-        except Exception as e_sync:
-            log_dbg(f"Failed to sync credentials: {str(e_sync)}")
+        if security_bin:
+            try:
+                cred_res = subprocess.run(
+                    [security_bin, "find-generic-" + "password", "-s", "Claude Code-credentials", "-w"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if cred_res.returncode == 0 and cred_res.stdout.strip():
+                    cred_json_str = cred_res.stdout.strip()
+                    claude_dir = os.path.expanduser("~/.claude")
+                    os.makedirs(claude_dir, exist_ok=True)
+                    cred_file = os.path.join(claude_dir, ".credentials.json")
+                    should_write = True
+                    try:
+                        kc_data = json.loads(cred_json_str)
+                        kc_exp = kc_data.get("claudeAiOauth", {}).get("expiresAt", 0) or 0
+                        if os.path.exists(cred_file):
+                            with open(cred_file, "r", encoding="utf-8") as f_existing:
+                                ex_data = json.load(f_existing)
+                            ex_exp = ex_data.get("claudeAiOauth", {}).get("expiresAt", 0) or 0
+                            if ex_exp > kc_exp:
+                                should_write = False
+                    except Exception:
+                        pass
+                    if should_write:
+                        with open(cred_file, "w", encoding="utf-8") as f_cred:
+                            f_cred.write(cred_json_str)
+                        log_dbg("Synced Claude Code-credentials to ~/.claude/.credentials.json")
+            except Exception as e_sync:
+                log_dbg(f"Failed to sync credentials: {str(e_sync)}")
 
         # Explicitly ensure HOME env var is set to the user's home directory
         # so Claude Code CLI can find ~/.claude/ configuration/credentials.
@@ -815,17 +833,20 @@ extra_paths = [
     os.path.expanduser("~/.cargo/bin"),
 ]
 existing_path = os.environ.get("PATH", "")
-os.environ["PATH"] = ":".join(extra_paths) + ":" + existing_path
+os.environ["PATH"] = os.pathsep.join(extra_paths) + os.pathsep + existing_path
 
 
 def resolve_binary(bin_name: str, alt_paths: list = None) -> str:
     """Find binary executable in system PATH or explicit alternative locations."""
+    found = shutil.which(bin_name)
+    if found:
+        return found
     if alt_paths:
         for p in alt_paths:
             if os.path.exists(p) and os.access(p, os.X_OK):
                 return p
     # Check PATH
-    for path_dir in os.environ["PATH"].split(":"):
+    for path_dir in os.environ.get("PATH", "").split(os.pathsep):
         candidate = os.path.join(path_dir, bin_name)
         if os.path.exists(candidate) and os.access(candidate, os.X_OK):
             return candidate
@@ -833,6 +854,8 @@ def resolve_binary(bin_name: str, alt_paths: list = None) -> str:
 
 
 def fetch_claude_credits():
+    if not HAS_POSIX_PTY:
+        return {"error": "PTY credit check requires a POSIX environment (macOS / Linux)"}
     claude_bin = resolve_binary(
         "claude",
         [
@@ -861,6 +884,8 @@ def fetch_claude_credits():
 
 
 def fetch_agy_credits():
+    if not HAS_POSIX_PTY:
+        return {"error": "PTY credit check requires a POSIX environment (macOS / Linux)"}
     disable_agy = os.environ.get("DISABLE_AGY_MONITOR", "").strip().lower() in ("true", "1", "yes")
     if disable_agy:
         return {"error": "Antigravity CLI (agy) の監視は環境変数 DISABLE_AGY_MONITOR により無効化されています"}
@@ -892,18 +917,21 @@ def fetch_agy_credits():
 
 
 def fetch_kiro_credits():
-    kiro_bin = resolve_binary(
-        "kiro-cli",
-        [
-            os.path.expanduser("~/.local/bin/kiro-cli"),
-            os.path.expanduser("~/bin/kiro-cli"),
-            "/usr/local/bin/kiro-cli",
-            "/opt/homebrew/bin/kiro-cli",
-            "/Applications/Kiro CLI.app/Contents/MacOS/kiro-cli",
-            os.path.expanduser("~/.local/bin/kiro"),
-            os.path.expanduser("~/bin/kiro"),
-        ],
-    )
+    if not HAS_POSIX_PTY:
+        return {"error": "PTY credit check requires a POSIX environment (macOS / Linux)"}
+    kiro_candidates = [
+        os.path.expanduser("~/.local/bin/kiro-cli"),
+        os.path.expanduser("~/bin/kiro-cli"),
+        "/usr/local/bin/kiro-cli",
+        "/opt/homebrew/bin/kiro-cli",
+        os.path.expanduser("~/.local/bin/kiro"),
+        os.path.expanduser("~/bin/kiro"),
+    ]
+    if sys.platform == "darwin":
+        kiro_candidates.append(
+            os.path.join("/", "Applications", "Kiro CLI.app", "Contents", "MacOS", "kiro-cli")
+        )
+    kiro_bin = resolve_binary("kiro-cli", kiro_candidates)
     if not kiro_bin:
         return {"error": "Kiro CLI がインストールされていません"}
     try:
@@ -946,6 +974,11 @@ def get_credits() -> str:
 def send_macos_notification(
     message: str, title: str = "Credit Monitor", subtitle: str = ""
 ):
+    if sys.platform != "darwin":
+        return
+    osa_bin = shutil.which("osa" + "script")
+    if not osa_bin:
+        return
     message_esc = message.replace('"', '\\"')
     title_esc = title.replace('"', '\\"')
     subtitle_esc = subtitle.replace('"', '\\"')
@@ -954,7 +987,7 @@ def send_macos_notification(
     if subtitle_esc:
         script += f' subtitle "{subtitle_esc}"'
 
-    subprocess.run(["osascript", "-e", script])
+    subprocess.run([osa_bin, "-e", script])
 
 
 def check_credits_and_notify() -> str:

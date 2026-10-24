@@ -11,7 +11,7 @@ import os from "node:os";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { TaskDuoClient, Task } from "@taskduo/sdk";
-import { buildAgentCommand, getAgentSpawnEnv } from "./commandBuilder.js";
+import { buildAgentCommand, findExecutable, getAgentSpawnEnv } from "./commandBuilder.js";
 import { AgentStreamFormatter, SupportedAgent } from "./streamFormatter.js";
 
 const execAsync = promisify(exec);
@@ -74,19 +74,60 @@ export class WorkerRunner {
     this.isCheckingHealth = true;
     try {
       const env = getAgentSpawnEnv();
-      const checkCli = async (cmd: string): Promise<{ status: "ok" | "error"; message?: string }> => {
-        try {
-          await execAsync(`${cmd} < /dev/null`, { env, timeout: 8000 });
-          return { status: "ok" };
-        } catch (err: any) {
-          return { status: "error", message: err.message || "Execution failed" };
-        }
+      const isWin = process.platform === "win32";
+      const probeBinary = (candidates: string[]): Promise<{ status: "ok" | "error"; message?: string }> => {
+        return new Promise((resolve) => {
+          let resolvedBin: string | null = null;
+          for (const name of candidates) {
+            resolvedBin = findExecutable(name, env);
+            if (resolvedBin) break;
+          }
+          const cmd = resolvedBin || candidates[0];
+          let settled = false;
+          let stderr = "";
+          const finish = (status: "ok" | "error", message?: string) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            resolve(message ? { status, message } : { status });
+          };
+          let child;
+          try {
+            child = spawn(cmd, ["--help"], {
+              env,
+              shell: isWin,
+              stdio: ["ignore", "pipe", "pipe"],
+            });
+          } catch (err: any) {
+            finish("error", err?.message || "Spawn failed");
+            return;
+          }
+          const timer = setTimeout(() => {
+            try {
+              child.kill("SIGKILL");
+            } catch {}
+            finish("error", "Health check timed out");
+          }, 8000);
+          child.stderr?.on("data", (chunk: Buffer) => {
+            stderr += chunk.toString();
+          });
+          child.on("error", (err: any) => {
+            finish("error", err?.message || "Execution failed");
+          });
+          child.on("close", (code) => {
+            if (code === 0) {
+              finish("ok");
+            } else {
+              finish("error", stderr.trim() || `Exited with code ${code}`);
+            }
+          });
+        });
       };
 
       const [agy, claude, kiro] = await Promise.all([
-        checkCli("agy --help"),
-        checkCli("claude --help"),
-        checkCli("kiro-cli --help || kiro --help"),
+        probeBinary(["agy"]),
+        probeBinary(["claude"]),
+        probeBinary(["kiro-cli", "kiro"]),
       ]);
 
       this.cachedHealth = { agy, claude, kiro };
@@ -104,7 +145,11 @@ export class WorkerRunner {
       const scriptPath = this.resolveScriptPath();
       if (!scriptPath) return;
       const env = getAgentSpawnEnv();
-      const { stdout } = await execAsync(`python3 "${scriptPath}"`, {
+      const pythonBin =
+        findExecutable("python3", env) ||
+        findExecutable("python", env) ||
+        (process.platform === "win32" ? "python" : "python3");
+      const { stdout } = await execAsync(`"${pythonBin}" "${scriptPath}"`, {
         env,
         timeout: 180000,
       });
@@ -234,9 +279,13 @@ export class WorkerRunner {
       });
 
       const exitCode = await new Promise<number>((resolve) => {
-        proc.on("close", (code) => {
+        proc.on("close", (code, signal) => {
           clearTimeout(timeoutTimer);
-          resolve(code ?? 0);
+          if (code === null || signal) {
+            resolve(1);
+            return;
+          }
+          resolve(code);
         });
         proc.on("error", (err) => {
           clearTimeout(timeoutTimer);
@@ -247,27 +296,41 @@ export class WorkerRunner {
 
       outputLogs += formatter.flush();
 
+      const hasStreamErrorOrTimeout =
+        /\[完了\] ステータス:\s*(?:ERROR|FAILURE|FAILED|TIMEOUT|ABORTED|CANCELLED)\b|\[agy\]\s*print timeout after\b|\[System\] Worker execution timed out/i.test(
+          outputLogs,
+        );
+
       if (exitCode === 0) {
-        console.log(`✅ Task completed successfully.`);
         const latestTask = await this.client.getTask(task.id);
         if (
           latestTask.status === "ai_confirming" ||
           latestTask.status === "ai_done" ||
           latestTask.status === "ai_pending"
         ) {
+          console.log(`✅ Task completed (${latestTask.status}).`);
           await this.client.updateTask(task.id, {
             result: latestTask.result || outputLogs,
           });
+        } else if (hasStreamErrorOrTimeout) {
+          console.warn(
+            `⚠️ Task process exited with 0, but stream error/timeout was detected without task_complete. Setting to ai_confirming...`,
+          );
+          await this.client.updateTask(task.id, {
+            status: "ai_confirming",
+            result: `${outputLogs}\n[System] 実行エラーまたはタイムアウトが検出されたため、ステータスを ai_confirming (確認中) に設定しました。`,
+          });
         } else {
+          console.log(`✅ Task completed successfully.`);
           await this.client.completeTask(task.id, outputLogs, undefined, {
             requiresHumanReview: (latestTask as any).reportRequired ?? true,
           });
         }
       } else {
-        console.warn(`⚠️ Task ended with exit code ${exitCode}. Updating status...`);
+        console.warn(`⚠️ Task ended with exit code ${exitCode}. Setting status to ai_confirming...`);
         await this.client.updateTask(task.id, {
-          status: "ai_todo",
-          result: outputLogs,
+          status: "ai_confirming",
+          result: `${outputLogs}\n[System] 実行エラー (Exit Code: ${exitCode}) により異常終了したため、ステータスを ai_confirming (確認中) に設定しました。`,
         });
       }
     } catch (err: any) {
