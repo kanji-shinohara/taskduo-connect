@@ -1,17 +1,54 @@
 import { useEffect } from "react";
 import { useAgentStore } from "../store/agentStore";
-import { Command } from "@tauri-apps/plugin-shell";
+
+interface TauriShellExecuteResult {
+  code: number | null;
+  signal: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+async function runShellCommand(
+  program: string,
+  args: string[],
+): Promise<string> {
+  const w = window as unknown as {
+    __TAURI_INTERNALS__?: {
+      invoke: (
+        cmd: string,
+        payload?: Record<string, unknown>,
+      ) => Promise<TauriShellExecuteResult>;
+    };
+  };
+  if (!w.__TAURI_INTERNALS__?.invoke) {
+    throw new Error("Tauri shell plugin IPC is not available");
+  }
+  const result = await w.__TAURI_INTERNALS__.invoke("plugin:shell|execute", {
+    program,
+    args,
+    options: {},
+  });
+  if (result.code !== 0) {
+    throw new Error(
+      `Command failed with code ${result.code}\n${result.stderr || ""}`,
+    );
+  }
+  return result.stdout || "";
+}
 
 export function useAgentDaemon() {
   const { isActive, serverUrl, apiKey, workerName } = useAgentStore();
 
   useEffect(() => {
-    if (!isActive || !serverUrl || !apiKey) {
+    if (!isActive || !serverUrl || !apiKey || !workerName) {
       return;
     }
 
+    let isRunningTask = false;
+
     const pollTasks = async () => {
-      const baseUrl = serverUrl.endsWith('/') ? serverUrl.slice(0, -1) : serverUrl;
+      if (isRunningTask) return;
+      const baseUrl = serverUrl.endsWith("/") ? serverUrl.slice(0, -1) : serverUrl;
       try {
         // Heartbeat & task fetch
         const res = await fetch(`${baseUrl}/api/workers/tasks`, {
@@ -22,6 +59,7 @@ export function useAgentDaemon() {
           },
           body: JSON.stringify({
             name: workerName,
+            status: "idle",
           }),
         });
 
@@ -34,25 +72,36 @@ export function useAgentDaemon() {
         const tasks = data.tasks || [];
 
         for (const task of tasks) {
+          isRunningTask = true;
           console.log("[AgentDaemon] Received task:", task.id);
-          
+
           // Mark task as in progress
           await updateTaskStatus(task.id, "ai_in_progress");
 
           try {
-            // Execute command locally
             console.log(`[AgentDaemon] Executing task ${task.id}...`);
-            
-            // agy-helper.py を直接呼び出すか、タスク側から指定されたコマンドを呼び出す
-            // ここでは簡易的に task.content にプロンプトが入っている前提で agy コマンドを実行する想定
-            // 実際にはタスクごとに実行コマンドを変えたりできるが、今回は固定
-            const output = await executeCommand("agy", ["--prompt", task.title + "\\n" + (task.content || "")]);
-            
+            const promptText = `${task.title}\n${task.content || task.description || ""}`;
+            const output = await executeCommand("agy", [
+              "--dangerously-skip-permissions",
+              "--print",
+              promptText,
+            ]);
+
             console.log(`[AgentDaemon] Task ${task.id} execution completed.`);
-            await completeTask(task.id, "ai_confirming", `Execution completed.\\n\\n\`\`\`\\n${output}\\n\`\`\``);
+            await completeTask(
+              task.id,
+              "ai_confirming",
+              `Execution completed.\n\n\`\`\`\n${output}\n\`\`\``,
+            );
           } catch (execError: any) {
             console.error(`[AgentDaemon] Task ${task.id} execution failed:`, execError);
-            await completeTask(task.id, "ai_todo", `Execution failed: ${execError.message || execError}`);
+            await completeTask(
+              task.id,
+              "ai_todo",
+              `Execution failed: ${execError.message || execError}`,
+            );
+          } finally {
+            isRunningTask = false;
           }
         }
       } catch (err) {
@@ -61,10 +110,10 @@ export function useAgentDaemon() {
     };
 
     const updateTaskStatus = async (taskId: string, status: string) => {
-      const baseUrl = serverUrl.endsWith('/') ? serverUrl.slice(0, -1) : serverUrl;
+      const baseUrl = serverUrl.endsWith("/") ? serverUrl.slice(0, -1) : serverUrl;
       try {
         await fetch(`${baseUrl}/api/tasks/${taskId}`, {
-          method: "PATCH",
+          method: "PUT",
           headers: {
             "Content-Type": "application/json",
             "x-api-key": apiKey,
@@ -76,19 +125,19 @@ export function useAgentDaemon() {
       }
     };
 
-    const completeTask = async (taskId: string, status: string, comment: string) => {
-      const baseUrl = serverUrl.endsWith('/') ? serverUrl.slice(0, -1) : serverUrl;
+    const completeTask = async (taskId: string, status: string, resultText: string) => {
+      const baseUrl = serverUrl.endsWith("/") ? serverUrl.slice(0, -1) : serverUrl;
       try {
-        // Task status update
-        await updateTaskStatus(taskId, status);
-        // Add comment
-        await fetch(`${baseUrl}/api/tasks/${taskId}/comments`, {
-          method: "POST",
+        await fetch(`${baseUrl}/api/tasks/${taskId}`, {
+          method: "PUT",
           headers: {
             "Content-Type": "application/json",
             "x-api-key": apiKey,
           },
-          body: JSON.stringify({ content: comment }),
+          body: JSON.stringify({
+            status,
+            result: resultText,
+          }),
         });
       } catch (err) {
         console.error("[AgentDaemon] Failed to complete task:", err);
@@ -96,33 +145,7 @@ export function useAgentDaemon() {
     };
 
     const executeCommand = async (command: string, args: string[]): Promise<string> => {
-      return new Promise((resolve, reject) => {
-        const cmd = Command.create(command, args);
-        let output = "";
-        let errorOutput = "";
-
-        cmd.on("close", (data) => {
-          if (data.code !== 0) {
-            reject(new Error(`Command failed with code ${data.code}\\n${errorOutput}`));
-          } else {
-            resolve(output);
-          }
-        });
-
-        cmd.on("error", (error) => {
-          reject(error);
-        });
-
-        cmd.stdout.on("data", (line) => {
-          output += line + "\\n";
-        });
-
-        cmd.stderr.on("data", (line) => {
-          errorOutput += line + "\\n";
-        });
-
-        cmd.spawn().catch(reject);
-      });
+      return runShellCommand(command, args);
     };
 
     // Initial poll

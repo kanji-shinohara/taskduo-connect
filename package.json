@@ -1,6 +1,6 @@
 {
   "name": "taskduo-connect-monorepo",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "TaskDuo Connect: Open Source AI Agent Integration Hub (SDK, MCP Server, Worker Daemon, Desktop Agent)",
   "author": "TaskDuo Authors",
@@ -9,7 +9,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build --workspace=@taskduo/sdk && npm run build --workspaces --if-present",
     "clean": "npm run clean --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present"

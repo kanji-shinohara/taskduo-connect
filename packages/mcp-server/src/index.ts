@@ -32,6 +32,7 @@ export async function startServer(): Promise<void> {
         "human_todo",
         "human_done",
       ]).optional().describe("Filter by task status"),
+      project: z.string().optional().describe("Filter by project name or ID"),
       projectId: z.string().optional().describe("Filter by project ID"),
       limit: z.number().optional().describe("Limit number of tasks returned"),
     },
@@ -90,8 +91,10 @@ export async function startServer(): Promise<void> {
       title: z.string().describe("Task title"),
       content: z.string().optional().describe("Detailed markdown description"),
       priority: z.enum(["low", "medium", "high", "urgent"]).default("medium"),
+      project: z.string().optional().describe("Project name or UUID"),
       projectId: z.string().optional().describe("Project UUID"),
       category: z.string().optional().describe("Category name or ID"),
+      status: z.enum(["ai_todo", "human_todo"]).optional().describe("Initial task status"),
       dods: z.array(
         z.object({
           text: z.string().describe("Definition of done criteria"),
@@ -105,9 +108,10 @@ export async function startServer(): Promise<void> {
           title: args.title,
           content: args.content,
           priority: args.priority,
+          project: args.project || args.projectId,
           projectId: args.projectId,
           category: args.category,
-          status: "ai_todo",
+          status: args.status || "ai_todo",
           dods: args.dods,
         });
         return {
@@ -158,11 +162,12 @@ export async function startServer(): Promise<void> {
   // ── task_complete ───────────────────────────────────────────────────────
   server.tool(
     "task_complete",
-    "Declare completion of a task. Sets status to 'ai_done' and closes all Definition of Done items.",
+    "Declare completion of a task. Sets status to 'ai_confirming' (when requiresHumanReview is true for deliverable completion review) or 'ai_done' and closes Definition of Done items.",
     {
       id: z.string().describe("Task UUID"),
       summary: z.string().describe("Brief summary of accomplishments and verification"),
       result: z.string().optional().describe("Detailed execution result markdown"),
+      requiresHumanReview: z.boolean().optional().describe("Set to true when the task produced deliverables (UI, images, reports, docs) requiring human completion review ('ai_confirming'). Defaults to false ('ai_done')."),
       dods: z.array(
         z.object({
           text: z.string(),
@@ -173,12 +178,14 @@ export async function startServer(): Promise<void> {
     async (args) => {
       try {
         const resultText = args.result || args.summary;
-        const task = await client.completeTask(args.id, resultText, args.dods);
+        const task = await client.completeTask(args.id, resultText, args.dods, {
+          requiresHumanReview: args.requiresHumanReview,
+        });
         return {
           content: [
             {
               type: "text",
-              text: `Task successfully marked as 'ai_done'.\n\n${JSON.stringify(task, null, 2)}`,
+              text: `Task successfully marked as '${task.status}'.\n\n${JSON.stringify(task, null, 2)}`,
             },
           ],
         };
@@ -210,6 +217,7 @@ export async function startServer(): Promise<void> {
       ]).optional(),
       priority: z.enum(["low", "medium", "high", "urgent"]).optional(),
       result: z.string().optional(),
+      humanConfirmations: z.array(z.any()).optional(),
       dods: z.array(
         z.object({
           text: z.string(),

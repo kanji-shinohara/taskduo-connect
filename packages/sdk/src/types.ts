@@ -10,8 +10,16 @@ export type TaskStatus =
   | "ai_pending"
   | "ai_confirming"
   | "ai_done"
+  | "ai_unnecessary"
   | "human_todo"
-  | "human_done";
+  | "human_pending"
+  | "human_in_progress"
+  | "human_confirming"
+  | "human_done"
+  | "human_unnecessary"
+  | "cicd_running"
+  | "cicd_failed"
+  | "cicd_success";
 
 export type TaskPriority = "low" | "medium" | "high" | "urgent";
 
@@ -28,7 +36,11 @@ export interface TaskArtifact {
 }
 
 export interface HumanConfirmation {
-  question: string;
+  id?: string;
+  question?: string;
+  choices?: string[];
+  selectedChoice?: string | null;
+  requirement?: string;
   options?: string[];
   response?: string;
   confirmedAt?: string;
@@ -70,11 +82,13 @@ export interface CreateTaskInput {
   status?: TaskStatus;
   priority?: TaskPriority;
   category?: string;
+  project?: string;
   projectId?: string;
   stepId?: string;
   aiAgent?: string;
   aiModel?: string;
   dods?: TaskDoD[];
+  humanConfirmations?: HumanConfirmation[] | null;
   dueDate?: string;
 }
 
@@ -85,6 +99,7 @@ export interface UpdateTaskInput {
   status?: TaskStatus;
   priority?: TaskPriority;
   category?: string;
+  project?: string;
   projectId?: string;
   stepId?: string;
   aiAgent?: string;
